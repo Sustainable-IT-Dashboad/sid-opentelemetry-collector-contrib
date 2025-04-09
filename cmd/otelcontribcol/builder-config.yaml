@@ -251,6 +251,10 @@ receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/yanggrpcreceiver v0.147.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver v0.147.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zookeeperreceiver v0.147.0
+  - gomod: github.com/Sustainable-IT-Dashboad/sid-opentelemetry-collector-contrib/receiver/dynatracereceiver v0.0.0
+    import: github.com/Sustainable-IT-Dashboad/sid-opentelemetry-collector-contrib/dynatracereceiver
+    name: dynatracereceiver
+    path: ./receiver/dynatracereceiver
 
 connectors:
   - gomod: go.opentelemetry.io/collector/connector/forwardconnector v0.147.0
