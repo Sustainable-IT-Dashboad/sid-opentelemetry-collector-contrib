@@ -12,22 +12,26 @@ receivers:
       - builtin:host.net.nic.trafficOut
       - builtin:host.net.nic.trafficIn 
       - builtin:kubernetes.node.conditions
-    resolution: 1h
-    from: now-30s
+    resolution: 1m
+    from: now-1m
     to: now
     poll_interval: 30s 
     max_retries: 3
     http_timeout: 30s
 
 exporters:
-  debug:
+  otlphttp:
+    endpoint: http://localhost:4318  
 
 processors:
   batch:
   resource:
     attributes:
       - key: environment
-        value: ${env:DEPLOYMENT_ENVIRONMENT}
+        value: ${env:DEPLOYMENT_ENVIRONMENT}  # prod, stage, test, dev
+        action: upsert
+      - key: project_name
+        value: ${env:PROJECT_NAME}            # inject your project/cluster name dynamically
         action: upsert
       - key: team_owner
         value: "team-sid"
@@ -38,5 +42,5 @@ service:
     metrics:
       receivers: [dynatrace]
       processors: [resource, batch]
-      exporters: [debug]
+      exporters: [otlphttp]
 

@@ -1,16 +1,16 @@
-
 # Dynatrace Receiver for OpenTelemetry Collector
 
 This is a custom OpenTelemetry receiver that pulls metrics from the Dynatrace Metrics API v2.
 
-Its main goal is to fetch metrics from an existing Dynatrace setup and make them available to your OpenTelemetry pipeline. Whether you want to export them, log them, or use them in a dashboard. You do need to setup your own .env with the given variables and also adjust the config.yaml depending on your needed metrics. 
+Its main goal is to fetch metrics from your existing Dynatrace setup and make them available to your OpenTelemetry pipeline — whether you want to log them, send them to dashboards, or route them to any exporter like Kafka or Prometheus.
+
+To use it, just set up a .env file with your Dynatrace credentials and adjust the config.yaml based on the metrics you want to collect.
 
 ---
 
 ## Motivation
 
 The goal is to use Dynatrace for performance monitoring and bring all their data into one central pipeline using OpenTelemetry.
-
 This receiver does this by:
 
 - Automatically fetching metrics from Dynatrace on a schedule  
@@ -39,13 +39,12 @@ receivers:
       - builtin:containers.cpu.usageTime
       - builtin:containers.memory.residentSetBytes
     resolution: 1h
-    from: "2025-04-01T00:00:00Z"
-    to: "2025-04-03T00:00:00Z"
+    from: now-1h
+    to: now
     poll_interval: 30s
     max_retries: 3
-    http_timeout: 30s
+    http_timeout: 10s
 
-#just examples
 processors:
   batch:
   resource:
@@ -53,11 +52,13 @@ processors:
       - key: environment
         value: ${env:DEPLOYMENT_ENVIRONMENT}
         action: upsert
+      - key: project_name
+        value: ${env:PROJECT_NAME}
+        action: upsert
       - key: team_owner
         value: "team-sid"
         action: insert
 
-# add your custom or other exporters to push the data
 exporters:
   logging:
     verbosity: detailed
@@ -68,10 +69,41 @@ service:
       receivers: [dynatrace]
       processors: [batch, resource]
       exporters: [logging]
+
 ```
 
 You can use `custom_labels` to tag metrics with helpful context like environment (`prod`, `stage`) or system identifiers.
 The idea is to make it as simple as possible and adjust needs with the config.yaml
 
+
+You can use .env variables to inject values into your config dynamically:
+
+## .env
+
+```
+API_ENDPOINT=https://your-tenant.live.dynatrace.com/api/v2/metrics/query
+API_TOKEN=dt0c01.XXX
+DEPLOYMENT_ENVIRONMENT=prod
+PROJECT_NAME=my-app
+```
+
+## Quick Notes
+
+This receiver runs on a polling schedule (poll_interval) and queries a time range based on from and to.
+Dynatrace supports relative times like now-1h and now for simple configuration. The receiver does not require any special Dynatrace agent or ActiveGate.
+
+## Getting Started
+
+Copy your .env and config.yaml to your working directory
+
+Build your custom Collector using the OpenTelemetry Collector Builder
+
+Run it with:
+
+bash
+```
+./otelcontribcol_windows_amd64.exe --config=receiver/dynatracereceiver/config.yaml
+```
 ---
+
 

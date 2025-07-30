@@ -27,8 +27,8 @@ func createDefaultConfig() component.Config {
 		APIEndpoint:     "https://YourEndpoint.live.dynatrace.com/api/v2/metrics/query", // Placeholder
 		APIToken:        "",
 		MetricSelectors: []string{},
-		Resolution:      "1h",
-		From:            "now-1h",
+		Resolution:      "1m",
+		From:            "now-1m",
 		To:              "now",
 		PollInterval:    30 * time.Second,
 		MaxRetries:      3,

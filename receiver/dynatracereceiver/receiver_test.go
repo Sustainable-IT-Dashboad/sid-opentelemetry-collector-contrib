@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -240,4 +242,40 @@ func TestConvertToMetricData(t *testing.T) {
 	val, exists := metric.Gauge().DataPoints().At(0).Attributes().Get("container")
 	assert.True(t, exists, "container attribute should exist")
 	assert.Equal(t, "example-container", val.Str())
+}
+
+func TestDynatraceURLGenerationFromConfig(t *testing.T) {
+
+	_ = os.Setenv("API_ENDPOINT", "https://dummy.dynatrace.com/api/v2/metrics/query")
+	_ = os.Setenv("API_TOKEN", "dummy-token")
+	_ = os.Setenv("DEPLOYMENT_ENVIRONMENT", "prod")
+	_ = os.Setenv("PROJECT_NAME", "my-customer-project")
+	_ = os.Setenv("DEPLOYMENT_REGION", "eu-west-1")
+
+	viper.SetConfigFile("config.yaml")
+	err := viper.ReadInConfig()
+	assert.NoError(t, err, "Config file should be read successfully")
+
+	// Unmarshal into your config struct
+	var cfg Config
+	err = viper.UnmarshalKey("receivers.dynatrace", &cfg)
+	assert.NoError(t, err, "Config should unmarshal correctly")
+
+	assert.Equal(t, "now", cfg.To)
+	assert.Equal(t, "now-1m", cfg.From)
+	assert.Equal(t, "1m", cfg.Resolution)
+	assert.NotEmpty(t, cfg.APIEndpoint)
+
+	metricSelector := "builtin:containers.cpu.usageTime"
+	url := fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s",
+		cfg.APIEndpoint,
+		metricSelector,
+		cfg.Resolution,
+		cfg.From,
+		cfg.To,
+	)
+
+	fmt.Println("Generated Dynatrace Query URL:")
+	fmt.Println(url)
+
 }

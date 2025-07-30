@@ -1,0 +1,31 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318  # Match the client's `otlphttp` exporter
+
+processors:
+  batch:
+  resource:
+    attributes:
+      - key: received_from
+        value: "client-xyz"   # Optional
+        action: insert
+
+exporters:
+  debug:
+    #verbosity: detailed  
+  kafka:
+    brokers: ["localhost:9092"]  
+    topic: "dynatrace-metrics"
+    encoding: otlp_json          # or otlp_proto
+
+service:
+  telemetry:
+    metrics:
+      level: none  
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [resource, batch]
+      exporters: [debug, kafka]
