@@ -5,7 +5,15 @@ package dynatracereceiver
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,6 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/config/configtls"
 )
 
 func TestReceiver_StartAndShutdown(t *testing.T) {
@@ -278,4 +287,106 @@ func TestDynatraceURLGenerationFromConfig(t *testing.T) {
 	fmt.Println("Generated Dynatrace Query URL:")
 	fmt.Println(url)
 
+}
+
+func genSelfSignedCert() (certPEM, keyPEM []byte, err error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	tmpl := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			Organization: []string{"test-local"},
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(24 * time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:    []string{"localhost"},
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certBuf := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyBuf := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	return certBuf, keyBuf, nil
+}
+
+func TestTLSInsecureSkipVerify(t *testing.T) {
+	certPEM, keyPEM, err := genSelfSignedCert()
+	if err != nil {
+		t.Fatalf("failed to generate cert: %v", err)
+	}
+
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("failed to parse keypair: %v", err)
+	}
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"totalCount":1,"result":[{"metricId":"test.metric","data":[]}]} `))
+	})
+
+	server := httptest.NewUnstartedServer(handler)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}}
+	server.StartTLS()
+	defer server.Close()
+
+	tests := []struct{
+		name string
+		insecure bool
+		wantErr bool
+	}{
+		{"verify_off", true, false},
+		{"verify_on", false, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{
+				APIEndpoint: server.URL,
+				APIToken:    "dummy",
+				MetricSelectors: []string{"metric"},
+				HTTPTimeout: 2 * time.Second,
+				MaxRetries: 1,
+			}
+
+			// set TLS setting per test
+			cfg.TLSSettings = configtls.ClientConfig{InsecureSkipVerify: tc.insecure}
+
+			r := &Receiver{Config: cfg}
+
+			// build httpClient like receiver.Start does
+			tlsCfg, err := cfg.TLSSettings.LoadTLSConfig(context.Background())
+			if err != nil {
+				t.Fatalf("LoadTLSConfig failed: %v", err)
+			}
+			transport := &http.Transport{TLSClientConfig: tlsCfg}
+			r.httpClient = &http.Client{Timeout: cfg.HTTPTimeout, Transport: transport}
+
+			ctx := context.Background()
+			_, err = r.fetchAllDynatraceMetrics(ctx, cfg)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected success but got error: %v", err)
+				}
+			}
+		})
+	}
 }
