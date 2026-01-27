@@ -11,6 +11,7 @@ To use it, just set up a .env file with your Dynatrace credentials and adjust th
 ## Motivation
 
 The goal is to use Dynatrace for performance monitoring and bring all their data into one central pipeline using OpenTelemetry.
+
 This receiver does this by:
 
 - Automatically fetching metrics from Dynatrace on a schedule  
@@ -44,6 +45,8 @@ receivers:
     poll_interval: 30s
     max_retries: 3
     http_timeout: 10s
+    tls_settings:
+      insecure_skip_verify: false # you can set this to true to handle self-signed certificates
 
 processors:
   batch:
@@ -105,5 +108,3 @@ bash
 ./otelcontribcol_windows_amd64.exe --config=receiver/dynatracereceiver/config.yaml
 ```
 ---
-
-

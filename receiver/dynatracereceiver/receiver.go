@@ -52,10 +52,17 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 	r.ticker = time.NewTicker(r.Config.PollInterval)
 	r.stopChan = make(chan struct{})
 
-	if r.httpClient == nil {
-		r.httpClient = &http.Client{
-			Timeout: r.Config.HTTPTimeout,
-		}
+	// apply TLS settings to http client
+	tlsConfig, err := r.Config.TLSSettings.LoadTLSConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load TLS config: %w", err)
+	}
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+	r.httpClient = &http.Client{
+		Timeout:   r.Config.HTTPTimeout,
+		Transport: transport,
 	}
 
 	go func() {

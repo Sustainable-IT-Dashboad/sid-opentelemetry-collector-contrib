@@ -10,18 +10,20 @@ receivers:
       - builtin:host.disk.used
       - builtin:host.disk.avail
       - builtin:host.net.nic.trafficOut
-      - builtin:host.net.nic.trafficIn 
+      - builtin:host.net.nic.trafficIn
       - builtin:kubernetes.node.conditions
     resolution: 1m
     from: now-1m
     to: now
-    poll_interval: 30s 
+    poll_interval: 30s
     max_retries: 3
     http_timeout: 30s
+    tls_settings:
+      insecure_skip_verify: true # added to skip TLS verification when dealing with self-signed certificates
 
 exporters:
   otlphttp:
-    endpoint: http://localhost:4318  
+    endpoint: http://localhost:4318
 
 processors:
   batch:
@@ -43,4 +45,3 @@ service:
       receivers: [dynatrace]
       processors: [resource, batch]
       exporters: [otlphttp]
-

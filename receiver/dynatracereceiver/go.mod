@@ -11,6 +11,7 @@ require (
 	go.opentelemetry.io/collector/consumer v1.28.1
 	go.opentelemetry.io/collector/pdata v1.28.1
 	go.opentelemetry.io/collector/receiver v1.28.1
+	go.opentelemetry.io/collector/config/configtls v1.27.1-0.20250313100724-0885401136ff
 )
 
 require (
