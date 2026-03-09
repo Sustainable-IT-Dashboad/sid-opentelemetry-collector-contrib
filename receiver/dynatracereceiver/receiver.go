@@ -74,9 +74,9 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 					fmt.Println("Error pulling metrics:", err)
 				}
 
-				fmt.println("metrics received: ", metrics)
+				fmt.Println("metrics received: ", metrics)
 				md := convertToMetricData(metrics)
-				fmt.println("converted metrics: ", md)
+				fmt.Println("converted metrics: ", md)
 				if err := r.NextMetric.ConsumeMetrics(ctx, md); err != nil {
 					fmt.Println("Error consuming metrics:", err)
 				}
@@ -105,7 +105,7 @@ func (r *Receiver) pullDynatraceMetrics(ctx context.Context, cfg *Config) ([]Dyn
 	for i := 0; i < cfg.MaxRetries; i++ {
 		metrics, err = r.fetchAllDynatraceMetrics(ctx, cfg)
 		if err == nil {
-			fmt.println("metrics received: ", metrics)
+			fmt.Println("metrics received: ", metrics)
 			return metrics, nil
 		}
 		fmt.Printf("Attempt %d failed: %v\n", i+1, err)
@@ -181,22 +181,22 @@ func (r *Receiver) makeHttPRequest(ctx context.Context, url string) (*http.Respo
 }
 
 func convertToMetricData(metrics []DynatraceMetricData) pmetric.Metrics {
-	fmt.println("------------------------ starting converter with: ", metrics)
+	fmt.Println("------------------------ starting converter with: ", metrics)
 	md := pmetric.NewMetrics()
-	fmt.println("init: ", md)
+	fmt.Println("init: ", md)
 
 	for _, metric := range metrics {
 		for _, data := range metric.Data {
 			rm := md.ResourceMetrics().AppendEmpty()
 			sm := rm.ScopeMetrics().AppendEmpty()
 			m := sm.Metrics().AppendEmpty()
-			fmt.println("rm: ", rm)
-			fmt.println("sm: ", sm)
+			fmt.Println("rm: ", rm)
+			fmt.Println("sm: ", sm)
 
 			m.SetName(metric.MetricID)
 			gauge := m.SetEmptyGauge()
 
-			fmt.println("m: ", m
+			fmt.Println("m: ", m
 			for i, timestamp := range data.Timestamps {
 				if i < len(data.Values) {
 					dp := gauge.DataPoints().AppendEmpty()
@@ -206,11 +206,11 @@ func convertToMetricData(metrics []DynatraceMetricData) pmetric.Metrics {
 					for key, val := range data.DimensionMap {
 						dp.Attributes().PutStr(key, val)
 					}
-					fmt.println("dp: ", dp)
+					fmt.Println("dp: ", dp)
 				}
 			}
 		}
 	}
-	fmt.println("------------------------ finished converter with: ", md)
+	fmt.Println("------------------------ finished converter with: ", md)
 	return md
 }
