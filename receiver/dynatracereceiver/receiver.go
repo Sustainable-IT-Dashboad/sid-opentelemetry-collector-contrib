@@ -74,9 +74,9 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 					fmt.Println("Error pulling metrics:", err)
 				}
 
-				fmt.Println("metrics received: ", metrics)
+				fmt.Printf("metrics received: %s \n", metrics)
 				md := convertToMetricData(metrics)
-				fmt.Println("converted metrics: ", md)
+				fmt.Printf("converted metrics: %s \n", md)
 				if err := r.NextMetric.ConsumeMetrics(ctx, md); err != nil {
 					fmt.Println("Error consuming metrics:", err)
 				}
@@ -105,7 +105,7 @@ func (r *Receiver) pullDynatraceMetrics(ctx context.Context, cfg *Config) ([]Dyn
 	for i := 0; i < cfg.MaxRetries; i++ {
 		metrics, err = r.fetchAllDynatraceMetrics(ctx, cfg)
 		if err == nil {
-			fmt.Println("metrics received: ", metrics)
+			fmt.Printf("metrics received: %s \n", metrics)
 			return metrics, nil
 		}
 		fmt.Printf("Attempt %d failed: %v\n", i+1, err)
@@ -130,14 +130,14 @@ func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([
 		return nil, err
 	}
 
-	fmt.Println("Raw reponse from dynatrace: ", body)
+	fmt.Printf("Raw reponse from dynatrace: %s \n", body)
 
 	var dtResponse DynatraceResponse
 	if err := json.Unmarshal(body, &dtResponse); err != nil {
 		return nil, fmt.Errorf("json unmarshal failed: %w", err)
 	}
 
-	fmt.Println("parsed reponse from dynatrace: ", dtResponse)
+	fmt.Printf("parsed reponse from dynatrace: %s \n", dtResponse)
 
 	return dtResponse.Result, nil
 }
@@ -146,7 +146,7 @@ func createMetricsQuery(cfg *Config) string {
 	metricSelector := strings.Join(cfg.MetricSelectors, ",")
 	url := fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s", cfg.APIEndpoint, metricSelector, cfg.Resolution, cfg.From, cfg.To)
 
-	fmt.Println("Fetching data from:", url)
+	fmt.Printf("Fetching data from: %s \n", url)
 	return url
 }
 
@@ -181,22 +181,22 @@ func (r *Receiver) makeHttPRequest(ctx context.Context, url string) (*http.Respo
 }
 
 func convertToMetricData(metrics []DynatraceMetricData) pmetric.Metrics {
-	fmt.Println("------------------------ starting converter with: ", metrics)
+	fmt.Printf("------------------------ starting converter with: %s \n", metrics)
 	md := pmetric.NewMetrics()
-	fmt.Println("init: ", md)
+	fmt.Printf("init: %s \n", md)
 
 	for _, metric := range metrics {
 		for _, data := range metric.Data {
 			rm := md.ResourceMetrics().AppendEmpty()
 			sm := rm.ScopeMetrics().AppendEmpty()
 			m := sm.Metrics().AppendEmpty()
-			fmt.Println("rm: ", rm)
-			fmt.Println("sm: ", sm)
+			fmt.Printf("rm: %s \n", rm)
+			fmt.Printf("sm: %s \n", sm)
 
 			m.SetName(metric.MetricID)
 			gauge := m.SetEmptyGauge()
 
-			fmt.Println("m: ", m
+			fmt.Printf("m: %s", m)
 			for i, timestamp := range data.Timestamps {
 				if i < len(data.Values) {
 					dp := gauge.DataPoints().AppendEmpty()
@@ -206,11 +206,11 @@ func convertToMetricData(metrics []DynatraceMetricData) pmetric.Metrics {
 					for key, val := range data.DimensionMap {
 						dp.Attributes().PutStr(key, val)
 					}
-					fmt.Println("dp: ", dp)
+					fmt.Printf("dp: %s", dp)
 				}
 			}
 		}
 	}
-	fmt.Println("------------------------ finished converter with: ", md)
+	fmt.Printf("------------------------ finished converter with: %s \n", md)
 	return md
 }

@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/MaCriMora/opentelemetry-collector-contrib/exporter/dynatraceexporter"
+	"github.com/Sustainable-IT-Dashboad/sid-opentelemetry-collector-contrib/exporter/dynatraceexporter"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )

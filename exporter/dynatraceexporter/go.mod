@@ -1,4 +1,4 @@
-module github.com/MaCriMora/opentelemetry-collector-contrib/exporter/dynatraceexporter
+module github.com/Sustainable-IT-Dashboad/sid-opentelemetry-collector-contrib/exporter/dynatraceexporter
 
 go 1.24.1
 

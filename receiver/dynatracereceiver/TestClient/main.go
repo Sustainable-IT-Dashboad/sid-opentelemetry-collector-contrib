@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/MaCriMora/Dynatrace-opentelemetry-collector-contrib/receiver/dynatracereceiver"
+	"github.com/Sustainable-IT-Dashboad/sid-opentelemetry-collector-contrib/receiver/dynatracereceiver"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/collector/config/configtls"
