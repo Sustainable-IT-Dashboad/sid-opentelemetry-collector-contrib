@@ -12,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -22,9 +23,9 @@ import (
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/pdata/pmetric"
-	"go.opentelemetry.io/collector/config/configtls"
 )
 
 func TestReceiver_StartAndShutdown(t *testing.T) {
@@ -36,10 +37,12 @@ func TestReceiver_StartAndShutdown(t *testing.T) {
 		HTTPTimeout:     1 * time.Second,
 	}
 	dummyConsumer := &DummyConsumer{}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &Receiver{
 		Config:     cfg,
 		NextMetric: dummyConsumer,
 		httpClient: &http.Client{},
+		Logger:     logger,
 	}
 
 	ctx := context.Background()
@@ -82,9 +85,11 @@ func TestPullDynatraceMetrics_Retry(t *testing.T) {
 		HTTPTimeout: 2 * time.Second,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &Receiver{
 		Config:     cfg,
 		httpClient: server.Client(),
+		Logger:     logger,
 	}
 
 	ctx := context.Background()
@@ -129,9 +134,11 @@ func TestFetchAllDynatraceMetrics(t *testing.T) {
 		HTTPTimeout:     2 * time.Second,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &Receiver{
 		Config:     cfg,
 		httpClient: server.Client(),
+		Logger:     logger,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.HTTPTimeout)
@@ -163,9 +170,11 @@ func TestFetchAllDynatraceMetrics_InvalidJSON(t *testing.T) {
 		MaxRetries:      1,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &Receiver{
 		Config:     cfg,
 		httpClient: server.Client(),
+		Logger:     logger,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.HTTPTimeout)
@@ -189,9 +198,11 @@ func TestFetchAllDynatraceMetrics_HttpError(t *testing.T) {
 		To:              "2025-04-02T00:00:00Z",
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &Receiver{
 		Config:     cfg,
 		httpClient: server.Client(),
+		Logger:     logger,
 	}
 	_, err := receiver.fetchAllDynatraceMetrics(context.Background(), cfg)
 	assert.Error(t, err)
@@ -210,9 +221,11 @@ func TestFetchAllDynatraceMetrics_HTTPTimeout(t *testing.T) {
 		MaxRetries:  1,
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &Receiver{
 		Config:     cfg,
 		httpClient: server.Client(),
+		Logger:     logger,
 	}
 
 	ctx := context.Background()
@@ -237,7 +250,8 @@ func TestConvertToMetricData(t *testing.T) {
 		},
 	}
 
-	result := convertToMetricData(sample)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	result := convertToMetricData(sample, logger)
 
 	metrics := result.ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
 	assert.Equal(t, 1, metrics.Len(), "Expected one metric")
@@ -284,8 +298,7 @@ func TestDynatraceURLGenerationFromConfig(t *testing.T) {
 		cfg.To,
 	)
 
-	fmt.Println("Generated Dynatrace Query URL:")
-	fmt.Println(url)
+	slog.Info("Generated Dynatrace Query URL:", "url", url)
 
 }
 
@@ -305,9 +318,9 @@ func genSelfSignedCert() (certPEM, keyPEM []byte, err error) {
 		Subject: pkix.Name{
 			Organization: []string{"test-local"},
 		},
-		NotBefore: time.Now().Add(-time.Hour),
-		NotAfter:  time.Now().Add(24 * time.Hour),
-		KeyUsage:  x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		NotBefore:   time.Now().Add(-time.Hour),
+		NotAfter:    time.Now().Add(24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
 		DNSNames:    []string{"localhost"},
@@ -344,10 +357,10 @@ func TestTLSInsecureSkipVerify(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 
-	tests := []struct{
-		name string
+	tests := []struct {
+		name     string
 		insecure bool
-		wantErr bool
+		wantErr  bool
 	}{
 		{"verify_off", true, false},
 		{"verify_on", false, true},
@@ -356,17 +369,18 @@ func TestTLSInsecureSkipVerify(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &Config{
-				APIEndpoint: server.URL,
-				APIToken:    "dummy",
+				APIEndpoint:     server.URL,
+				APIToken:        "dummy",
 				MetricSelectors: []string{"metric"},
-				HTTPTimeout: 2 * time.Second,
-				MaxRetries: 1,
+				HTTPTimeout:     2 * time.Second,
+				MaxRetries:      1,
 			}
 
 			// set TLS setting per test
 			cfg.TLSSettings = configtls.ClientConfig{InsecureSkipVerify: tc.insecure}
 
-			r := &Receiver{Config: cfg}
+			logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			r := &Receiver{Config: cfg, Logger: logger}
 
 			// build httpClient like receiver.Start does
 			tlsCfg, err := cfg.TLSSettings.LoadTLSConfig(context.Background())
