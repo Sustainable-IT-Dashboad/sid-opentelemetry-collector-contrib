@@ -5,12 +5,14 @@ package dynatracereceiver
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
+	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/receiver"
-	"go.opentelemetry.io/collector/config/configtls"
 )
 
 const TypeStr = "dynatrace"
@@ -45,8 +47,10 @@ func createMetricsReceiver(
 	nextConsumer consumer.Metrics,
 ) (receiver.Metrics, error) {
 	config := cfg.(*Config)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})) // Using debug level for detailed logging. Users can adjust this as needed.
 	return &Receiver{
 		Config:     config,
 		NextMetric: nextConsumer,
+		Logger:     logger,
 	}, nil
 }
