@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
@@ -96,9 +97,11 @@ func main() {
 		TLSSettings:     tlsSettings, // added to test TLS settings in test client
 	}
 
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	receiver := &dynatracereceiver.Receiver{
 		Config:     config,
 		NextMetric: &DummyConsumer{}, //dynatraceexporter.NewSimpleExporter(),
+		Logger:     logger,
 	}
 
 	err = receiver.Start(context.Background(), nil)
