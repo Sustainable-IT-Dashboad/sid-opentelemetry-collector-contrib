@@ -20,6 +20,7 @@ receivers:
     http_timeout: 30s
     tls_settings:
       insecure_skip_verify: true # added to skip TLS verification when dealing with self-signed certificates
+    debug_level_logging: false # added to toggle debug-level logging
 
 exporters:
   otlphttp:
