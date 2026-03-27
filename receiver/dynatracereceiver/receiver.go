@@ -76,9 +76,9 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 					r.Logger.Error("Error pulling metrics:", "error", err)
 				}
 
-				r.Logger.Info("Metrics received", "metrics", metrics)
+				r.Logger.Debug("Metrics received", "metrics", metrics)
 				md := convertToMetricData(metrics, r.Logger)
-				r.Logger.Info("Converted metrics", "metrics", md)
+				r.Logger.Debug("Converted metrics", "metrics", md)
 				if err := r.NextMetric.ConsumeMetrics(ctx, md); err != nil {
 					r.Logger.Error("Error consuming metrics:", "error", err)
 				}
