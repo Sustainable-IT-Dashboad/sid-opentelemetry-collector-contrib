@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type Receiver struct {
 	ticker     *time.Ticker
 	stopChan   chan struct{}
 	httpClient *http.Client
+	Logger     *slog.Logger
 }
 
 type DynatraceResponse struct {
@@ -47,7 +49,7 @@ type MetricValues struct {
 
 // start polling from Dynatrace.
 func (r *Receiver) Start(ctx context.Context, host component.Host) error { // revive:disable-line:unused-parameter
-	fmt.Println("Dynatrace Receiver started with config:", r.Config)
+	r.Logger.Info("Dynatrace Receiver started with config:", "config", r.Config)
 
 	r.ticker = time.NewTicker(r.Config.PollInterval)
 	r.stopChan = make(chan struct{})
@@ -71,18 +73,18 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 			case <-r.ticker.C:
 				metrics, err := r.pullDynatraceMetrics(ctx, r.Config)
 				if err != nil {
-					fmt.Println("Error pulling metrics:", err)
+					r.Logger.Error("Error pulling metrics:", "error", err)
 				}
 
-				fmt.Printf("metrics received: %s \n", metrics)
-				md := convertToMetricData(metrics)
-				fmt.Printf("converted metrics: %s \n", md)
+				r.Logger.Debug("Metrics received", "metrics", metrics)
+				md := convertToMetricData(metrics, r.Logger)
+				r.Logger.Debug("Converted metrics", "metrics", md)
 				if err := r.NextMetric.ConsumeMetrics(ctx, md); err != nil {
-					fmt.Println("Error consuming metrics:", err)
+					r.Logger.Error("Error consuming metrics:", "error", err)
 				}
 
 			case <-r.stopChan:
-				fmt.Println("Stopping Dynatrace Receiver polling loop.")
+				r.Logger.Info("Stopping Dynatrace Receiver polling loop.")
 				return
 			}
 		}
@@ -92,7 +94,7 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 }
 
 func (r *Receiver) Shutdown(_ context.Context) error {
-	fmt.Println("Dynatrace Receiver shutting down.")
+	r.Logger.Info("Dynatrace Receiver shutting down.")
 	r.ticker.Stop()
 	close(r.stopChan)
 	return nil
@@ -105,17 +107,17 @@ func (r *Receiver) pullDynatraceMetrics(ctx context.Context, cfg *Config) ([]Dyn
 	for i := 0; i < cfg.MaxRetries; i++ {
 		metrics, err = r.fetchAllDynatraceMetrics(ctx, cfg)
 		if err == nil {
-			fmt.Printf("metrics received: %s \n", metrics)
+			r.Logger.Debug("Metrics recieved:", "metrics", metrics)
 			return metrics, nil
 		}
-		fmt.Printf("Attempt %d failed: %v\n", i+1, err)
+		r.Logger.Error("Attempt failed:", "attempt", i+1, "error", err)
 		time.Sleep(time.Second * time.Duration(i+1)) // simple backoff
 	}
 	return nil, fmt.Errorf("all retries failed: %w", err)
 }
 
 func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([]DynatraceMetricData, error) {
-	url := createMetricsQuery(cfg)
+	url := createMetricsQuery(cfg, r.Logger)
 
 	ctx, cancel := context.WithTimeout(ctx, cfg.HTTPTimeout)
 	defer cancel()
@@ -130,23 +132,23 @@ func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([
 		return nil, err
 	}
 
-	fmt.Printf("Raw reponse from dynatrace: %s \n", body)
+	r.Logger.Debug("Raw response from Dynatrace", "response", string(body))
 
 	var dtResponse DynatraceResponse
 	if err := json.Unmarshal(body, &dtResponse); err != nil {
 		return nil, fmt.Errorf("json unmarshal failed: %w", err)
 	}
 
-	fmt.Printf("parsed reponse from dynatrace: %s \n", dtResponse)
+	r.Logger.Debug("Parsed response from Dynatrace", "response", dtResponse)
 
 	return dtResponse.Result, nil
 }
 
-func createMetricsQuery(cfg *Config) string {
+func createMetricsQuery(cfg *Config, logger *slog.Logger) string {
 	metricSelector := strings.Join(cfg.MetricSelectors, ",")
 	url := fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s", cfg.APIEndpoint, metricSelector, cfg.Resolution, cfg.From, cfg.To)
 
-	fmt.Printf("Fetching data from: %s \n", url)
+	logger.Debug("Fetching data from: ", "url", url)
 	return url
 }
 
@@ -180,23 +182,23 @@ func (r *Receiver) makeHttPRequest(ctx context.Context, url string) (*http.Respo
 	return resp, nil
 }
 
-func convertToMetricData(metrics []DynatraceMetricData) pmetric.Metrics {
-	fmt.Printf("------------------------ starting converter with: %s \n", metrics)
+func convertToMetricData(metrics []DynatraceMetricData, logger *slog.Logger) pmetric.Metrics {
+	logger.Debug("------------------------ starting converter with:", "metrics", metrics)
 	md := pmetric.NewMetrics()
-	fmt.Printf("init: %s \n", md)
+	logger.Debug("init", "metrics", md)
 
 	for _, metric := range metrics {
 		for _, data := range metric.Data {
 			rm := md.ResourceMetrics().AppendEmpty()
 			sm := rm.ScopeMetrics().AppendEmpty()
 			m := sm.Metrics().AppendEmpty()
-			fmt.Printf("rm: %s \n", rm)
-			fmt.Printf("sm: %s \n", sm)
+			logger.Debug("rm:", "rm", rm)
+			logger.Debug("sm:", "sm", sm)
 
 			m.SetName(metric.MetricID)
 			gauge := m.SetEmptyGauge()
 
-			fmt.Printf("m: %s", m)
+			logger.Debug("m:", "m", m)
 			for i, timestamp := range data.Timestamps {
 				if i < len(data.Values) {
 					dp := gauge.DataPoints().AppendEmpty()
@@ -206,11 +208,11 @@ func convertToMetricData(metrics []DynatraceMetricData) pmetric.Metrics {
 					for key, val := range data.DimensionMap {
 						dp.Attributes().PutStr(key, val)
 					}
-					fmt.Printf("dp: %s", dp)
+					logger.Debug("dp:", "dp", dp)
 				}
 			}
 		}
 	}
-	fmt.Printf("------------------------ finished converter with: %s \n", md)
+	logger.Debug("------------------------ finished converter with:", "metrics", metrics)
 	return md
 }
