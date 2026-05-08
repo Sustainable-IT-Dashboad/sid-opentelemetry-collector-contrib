@@ -45,6 +45,7 @@ func main() {
 	}
 
 	metricSelectors := viper.GetStringSlice("receivers.dynatrace.metric_selectors")
+	hostIDs := viper.GetStringSlice("receivers.dynatrace.host_ids")
 	resolution := viper.GetString("receivers.dynatrace.resolution")
 	from := viper.GetString("receivers.dynatrace.from")
 	to := viper.GetString("receivers.dynatrace.to")
@@ -88,6 +89,7 @@ func main() {
 		APIEndpoint:     apiEndpoint,
 		APIToken:        apiToken,
 		MetricSelectors: metricSelectors,
+    	HostIDs:         hostIDs,
 		Resolution:      resolution,
 		From:            from,
 		To:              to,
