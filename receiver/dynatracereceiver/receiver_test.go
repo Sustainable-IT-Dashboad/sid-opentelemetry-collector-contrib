@@ -36,6 +36,7 @@ func TestReceiver_StartAndShutdown(t *testing.T) {
 		MetricSelectors: []string{"builtin:metric"},
 		PollInterval:    10 * time.Millisecond,
 		HTTPTimeout:     1 * time.Second,
+		MaxRetries:      1,
 	}
 	dummyConsumer := &DummyConsumer{}
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -407,50 +408,281 @@ func TestTLSInsecureSkipVerify(t *testing.T) {
 }
 
 func TestCreateMetricsQuery_WithHostIDs(t *testing.T) {
-    cfg := &Config{
-        APIEndpoint:     "https://dummy.dynatrace.com/api/v2/metrics/query",
-        MetricSelectors: []string{"builtin:host.cpu.usage", "builtin:host.mem.used"},
-        HostIDs:         []string{"HOST-xyz", "HOST-abc"},
-        Resolution:      "1m",
-        From:            "now-1m",
-        To:              "now",
-    }
+	cfg := &Config{
+		APIEndpoint:     "https://dummy.dynatrace.com/api/v2/metrics/query",
+		MetricSelectors: []string{"builtin:host.cpu.usage", "builtin:host.mem.used"},
+		HostIDs:         []string{"HOST-xyz", "HOST-abc"},
+		Resolution:      "1m",
+		From:            "now-1m",
+		To:              "now",
+	}
 
-    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-    queryURL := createMetricsQuery(cfg, logger)
+	queryURL := createMetricsQuery(cfg, logger)
 
-    parsedURL, err := url.Parse(queryURL)
-    assert.NoError(t, err)
+	parsedURL, err := url.Parse(queryURL)
+	assert.NoError(t, err)
 
-    params := parsedURL.Query()
+	params := parsedURL.Query()
 
-    assert.Equal(t, "builtin:host.cpu.usage,builtin:host.mem.used", params.Get("metricSelector"))
-    assert.Equal(t, "1m", params.Get("resolution"))
-    assert.Equal(t, "now-1m", params.Get("from"))
-    assert.Equal(t, "now", params.Get("to"))
-    assert.Equal(t, `type("HOST"),entityId("HOST-xyz","HOST-abc")`, params.Get("entitySelector"))
+	assert.Equal(t, "builtin:host.cpu.usage,builtin:host.mem.used", params.Get("metricSelector"))
+	assert.Equal(t, "1m", params.Get("resolution"))
+	assert.Equal(t, "now-1m", params.Get("from"))
+	assert.Equal(t, "now", params.Get("to"))
+	assert.Equal(t, `type("HOST"),entityId("HOST-xyz","HOST-abc")`, params.Get("entitySelector"))
 }
 
 func TestCreateMetricsQuery_WithoutHostIDs(t *testing.T) {
-    cfg := &Config{
-        APIEndpoint:     "https://dummy.dynatrace.com/api/v2/metrics/query",
-        MetricSelectors: []string{"builtin:host.cpu.usage"},
-        HostIDs:         []string{},
-        Resolution:      "1m",
-        From:            "now-1m",
-        To:              "now",
-    }
+	cfg := &Config{
+		APIEndpoint:     "https://dummy.dynatrace.com/api/v2/metrics/query",
+		MetricSelectors: []string{"builtin:host.cpu.usage"},
+		HostIDs:         []string{},
+		Resolution:      "1m",
+		From:            "now-1m",
+		To:              "now",
+	}
 
-    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-    queryURL := createMetricsQuery(cfg, logger)
+	queryURL := createMetricsQuery(cfg, logger)
 
-    parsedURL, err := url.Parse(queryURL)
-    assert.NoError(t, err)
+	parsedURL, err := url.Parse(queryURL)
+	assert.NoError(t, err)
 
-    params := parsedURL.Query()
+	params := parsedURL.Query()
 
-    assert.Equal(t, "builtin:host.cpu.usage", params.Get("metricSelector"))
-    assert.Equal(t, "", params.Get("entitySelector"))
+	assert.Equal(t, "builtin:host.cpu.usage", params.Get("metricSelector"))
+	assert.Equal(t, "", params.Get("entitySelector"))
+}
+
+func TestFetchAllDynatraceMetrics_EnrichesHostNameAndCachesLookup(t *testing.T) {
+	metricsResponse := `{
+        "totalCount": 1,
+        "resolution": "1m",
+        "result": [{
+            "metricId": "builtin:host.cpu.usage",
+            "data": [{
+                "timestamps": [1712203200000],
+                "values": [55.0],
+                "dimensions": ["HOST-xyz"],
+                "dimensionMap": {
+                    "dt.entity.host": "HOST-xyz"
+                }
+            }]
+        }]
+    }`
+
+	entitiesResponse := `{
+        "totalCount": 1,
+        "pageSize": 1,
+        "entities": [{
+            "entityId": "HOST-xyz",
+            "displayName": "my-readable-host-name"
+        }]
+    }`
+
+	var entitiesRequestCount int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.Header.Get("Authorization"), "Api-Token")
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/api/v2/metrics/query":
+			fmt.Fprintln(w, metricsResponse)
+
+		case "/api/v2/entities":
+			entitiesRequestCount++
+
+			assert.Equal(t, `type("HOST"),entityId("HOST-xyz")`, r.URL.Query().Get("entitySelector"))
+
+			fmt.Fprintln(w, entitiesResponse)
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &Config{
+		APIEndpoint:     server.URL + "/api/v2/metrics/query",
+		APIToken:        "dummy-token",
+		MetricSelectors: []string{"builtin:host.cpu.usage"},
+		HostIDs:         []string{"HOST-xyz"},
+		Resolution:      "1m",
+		From:            "now-1m",
+		To:              "now",
+		MaxRetries:      1,
+		HTTPTimeout:     2 * time.Second,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	receiver := &Receiver{
+		Config:     cfg,
+		httpClient: server.Client(),
+		Logger:     logger,
+	}
+
+	ctx := context.Background()
+
+	firstResult, err := receiver.fetchAllDynatraceMetrics(ctx, cfg)
+	assert.NoError(t, err)
+	assert.Len(t, firstResult, 1)
+
+	firstDimensionMap := firstResult[0].Data[0].DimensionMap
+	assert.Equal(t, "HOST-xyz", firstDimensionMap["dt.entity.host"])
+	assert.Equal(t, "my-readable-host-name", firstDimensionMap["host.name"])
+
+	secondResult, err := receiver.fetchAllDynatraceMetrics(ctx, cfg)
+	assert.NoError(t, err)
+	assert.Len(t, secondResult, 1)
+
+	secondDimensionMap := secondResult[0].Data[0].DimensionMap
+	assert.Equal(t, "HOST-xyz", secondDimensionMap["dt.entity.host"])
+	assert.Equal(t, "my-readable-host-name", secondDimensionMap["host.name"])
+
+	assert.Equal(t, 1, entitiesRequestCount, "host name should be resolved only once due to cache")
+}
+
+func TestFetchAllDynatraceMetrics_LeavesHostNameEmptyWhenEntityNameMissing(t *testing.T) {
+	metricsResponse := `{
+        "totalCount": 1,
+        "resolution": "1m",
+        "result": [{
+            "metricId": "builtin:host.cpu.usage",
+            "data": [{
+                "timestamps": [1712203200000],
+                "values": [55.0],
+                "dimensions": ["HOST-xyz"],
+                "dimensionMap": {
+                    "dt.entity.host": "HOST-xyz"
+                }
+            }]
+        }]
+    }`
+
+	entitiesResponse := `{
+        "totalCount": 1,
+        "pageSize": 1,
+        "entities": [{
+            "entityId": "HOST-xyz",
+            "displayName": ""
+        }]
+    }`
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.Header.Get("Authorization"), "Api-Token")
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.URL.Path {
+		case "/api/v2/metrics/query":
+			fmt.Fprintln(w, metricsResponse)
+
+		case "/api/v2/entities":
+			assert.Equal(t, `type("HOST"),entityId("HOST-xyz")`, r.URL.Query().Get("entitySelector"))
+			fmt.Fprintln(w, entitiesResponse)
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &Config{
+		APIEndpoint:     server.URL + "/api/v2/metrics/query",
+		APIToken:        "dummy-token",
+		MetricSelectors: []string{"builtin:host.cpu.usage"},
+		HostIDs:         []string{"HOST-xyz"},
+		Resolution:      "1m",
+		From:            "now-1m",
+		To:              "now",
+		MaxRetries:      1,
+		HTTPTimeout:     2 * time.Second,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	receiver := &Receiver{
+		Config:     cfg,
+		httpClient: server.Client(),
+		Logger:     logger,
+	}
+
+	result, err := receiver.fetchAllDynatraceMetrics(context.Background(), cfg)
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 1)
+
+	dimensionMap := result[0].Data[0].DimensionMap
+
+	assert.Equal(t, "HOST-xyz", dimensionMap["dt.entity.host"])
+	assert.Empty(t, dimensionMap["host.name"])
+}
+
+func TestFetchAllDynatraceMetrics_ContinuesWhenEntitiesAPIFails(t *testing.T) {
+	metricsResponse := `{
+        "totalCount": 1,
+        "resolution": "1m",
+        "result": [{
+            "metricId": "builtin:host.cpu.usage",
+            "data": [{
+                "timestamps": [1712203200000],
+                "values": [55.0],
+                "dimensions": ["HOST-xyz"],
+                "dimensionMap": {
+                    "dt.entity.host": "HOST-xyz"
+                }
+            }]
+        }]
+    }`
+
+	var entitiesRequestCount int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Contains(t, r.Header.Get("Authorization"), "Api-Token")
+
+		switch r.URL.Path {
+		case "/api/v2/metrics/query":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintln(w, metricsResponse)
+
+		case "/api/v2/entities":
+			entitiesRequestCount++
+			http.Error(w, "forbidden", http.StatusForbidden)
+
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &Config{
+		APIEndpoint:     server.URL + "/api/v2/metrics/query",
+		APIToken:        "dummy-token",
+		MetricSelectors: []string{"builtin:host.cpu.usage"},
+		HostIDs:         []string{"HOST-xyz"},
+		Resolution:      "1m",
+		From:            "now-1m",
+		To:              "now",
+		MaxRetries:      1,
+		HTTPTimeout:     2 * time.Second,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	receiver := &Receiver{
+		Config:     cfg,
+		httpClient: server.Client(),
+		Logger:     logger,
+	}
+
+	result, err := receiver.fetchAllDynatraceMetrics(context.Background(), cfg)
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, 1, entitiesRequestCount)
+
+	dimensionMap := result[0].Data[0].DimensionMap
+
+	assert.Equal(t, "HOST-xyz", dimensionMap["dt.entity.host"])
+	assert.Empty(t, dimensionMap["host.name"])
 }
