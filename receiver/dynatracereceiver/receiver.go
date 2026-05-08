@@ -87,8 +87,12 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 				metrics, err := r.pullDynatraceMetrics(ctx, r.Config)
 				if err != nil {
 					r.Logger.Error("Error pulling metrics:", "error", err)
+					continue
 				}
-
+				if len(metrics) == 0 {
+					r.Logger.Debug("No metrics received from Dynatrace")
+					continue
+				}
 				r.Logger.Debug("Metrics received", "metrics", metrics)
 				md := convertToMetricData(metrics, r.Logger)
 				r.Logger.Debug("Converted metrics", "metrics", md)
@@ -120,7 +124,7 @@ func (r *Receiver) pullDynatraceMetrics(ctx context.Context, cfg *Config) ([]Dyn
 	for i := 0; i < cfg.MaxRetries; i++ {
 		metrics, err = r.fetchAllDynatraceMetrics(ctx, cfg)
 		if err == nil {
-			r.Logger.Debug("Metrics recieved:", "metrics", metrics)
+			r.Logger.Debug("Metrics received:", "metrics", metrics)
 			return metrics, nil
 		}
 		r.Logger.Error("Attempt failed:", "attempt", i+1, "error", err)
@@ -135,7 +139,7 @@ func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([
 	ctx, cancel := context.WithTimeout(ctx, cfg.HTTPTimeout)
 	defer cancel()
 
-	resp, err := r.makeHttPRequest(ctx, url)
+	resp, err := r.makeHTTPRequest(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
@@ -293,7 +297,7 @@ func (r *Receiver) resolveHostNames(ctx context.Context, cfg *Config, hostIDs []
 
 	r.Logger.Debug("Fetching Dynatrace host entities", "url", entitiesURL)
 
-	resp, err := r.makeHttPRequest(ctx, entitiesURL)
+	resp, err := r.makeHTTPRequest(ctx, entitiesURL)
 	if err != nil {
 		return fmt.Errorf("entities request failed: %w", err)
 	}
@@ -365,7 +369,7 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 	return body, nil
 }
 
-func (r *Receiver) makeHttPRequest(ctx context.Context, url string) (*http.Response, error) {
+func (r *Receiver) makeHTTPRequest(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
