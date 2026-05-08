@@ -686,3 +686,67 @@ func TestFetchAllDynatraceMetrics_ContinuesWhenEntitiesAPIFails(t *testing.T) {
 	assert.Equal(t, "HOST-xyz", dimensionMap["dt.entity.host"])
 	assert.Empty(t, dimensionMap["host.name"])
 }
+
+func TestReceiver_DoesNotConsumeMetricsWhenPullFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	consumed := make(chan struct{}, 1)
+
+	cfg := &Config{
+		APIEndpoint:     server.URL,
+		APIToken:        "dummy-token",
+		MetricSelectors: []string{"builtin:host.cpu.usage"},
+		Resolution:      "1m",
+		From:            "now-1m",
+		To:              "now",
+		PollInterval:    10 * time.Millisecond,
+		HTTPTimeout:     200 * time.Millisecond,
+		MaxRetries:      1,
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	receiver := &Receiver{
+		Config: cfg,
+		NextMetric: &FailOnConsumeConsumer{
+			consumed: consumed,
+		},
+		Logger: logger,
+	}
+
+	ctx := context.Background()
+
+	err := receiver.Start(ctx, nil)
+	assert.NoError(t, err)
+
+	defer func() {
+		err := receiver.Shutdown(ctx)
+		assert.NoError(t, err)
+	}()
+
+	select {
+	case <-consumed:
+		t.Fatal("ConsumeMetrics should not be called when pulling Dynatrace metrics fails")
+	case <-time.After(100 * time.Millisecond):
+		// Expected: no metrics should be consumed when the pull fails.
+	}
+}
+
+type FailOnConsumeConsumer struct {
+	consumed chan struct{}
+}
+
+func (c *FailOnConsumeConsumer) ConsumeMetrics(_ context.Context, _ pmetric.Metrics) error {
+	select {
+	case c.consumed <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func (c *FailOnConsumeConsumer) Capabilities() consumer.Capabilities {
+	return consumer.Capabilities{MutatesData: false}
+}
