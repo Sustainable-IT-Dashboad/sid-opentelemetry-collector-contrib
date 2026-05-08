@@ -17,6 +17,7 @@ type Config struct {
 	APIEndpoint       string                 `mapstructure:"API_ENDPOINT"`
 	APIToken          string                 `mapstructure:"API_TOKEN"`
 	MetricSelectors   []string               `mapstructure:"metric_selectors"`
+	HostIDs           []string               `mapstructure:"host_ids"`
 	Resolution        string                 `mapstructure:"resolution"`
 	From              string                 `mapstructure:"from"`
 	To                string                 `mapstructure:"to"`
@@ -26,3 +27,4 @@ type Config struct {
 	TLSSettings       configtls.ClientConfig `mapstructure:"tls_settings"`        // Added TLS settings to handle self-signed certificates
 	DebugLevelLogging bool                   `mapstructure:"debug_level_logging"` // Added Debug-Level logging toggle
 }
+

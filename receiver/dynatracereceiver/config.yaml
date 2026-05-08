@@ -2,6 +2,9 @@ receivers:
   dynatrace:
     API_ENDPOINT: ${env:API_ENDPOINT}
     API_TOKEN: ${env:API_TOKEN}
+    host_ids:
+      - HOST-xyz
+      - HOST-abc
     metric_selectors:
       - builtin:containers.cpu.usageTime
       - builtin:containers.memory.residentSetBytes
