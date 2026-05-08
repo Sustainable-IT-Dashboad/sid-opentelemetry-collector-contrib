@@ -35,6 +35,9 @@ type MetricValues struct {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+    fmt.Println("Received request:", r.URL.String())
+    fmt.Println("metricSelector:", r.URL.Query().Get("metricSelector"))
+    fmt.Println("entitySelector:", r.URL.Query().Get("entitySelector"))
     nowMs := time.Now().UnixMilli()
     resp := DynatraceResponse{
         TotalCount: 1,
