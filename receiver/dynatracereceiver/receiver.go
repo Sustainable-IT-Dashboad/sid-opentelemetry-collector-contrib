@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -145,11 +146,41 @@ func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([
 }
 
 func createMetricsQuery(cfg *Config, logger *slog.Logger) string {
-	metricSelector := strings.Join(cfg.MetricSelectors, ",")
-	url := fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s", cfg.APIEndpoint, metricSelector, cfg.Resolution, cfg.From, cfg.To)
+    metricSelector := strings.Join(cfg.MetricSelectors, ",")
 
-	logger.Debug("Fetching data from: ", "url", url)
-	return url
+    url, err := url.Parse(cfg.APIEndpoint)
+    if err != nil {
+        // Fallback keeps old behavior if endpoint is somehow invalid.
+        logger.Error("Invalid API endpoint, falling back to raw URL creation", "error", err)
+        return fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s",
+            cfg.APIEndpoint,
+            metricSelector,
+            cfg.Resolution,
+            cfg.From,
+            cfg.To,
+        )
+    }
+
+    q := url.Query()
+    q.Set("metricSelector", metricSelector)
+    q.Set("resolution", cfg.Resolution)
+    q.Set("from", cfg.From)
+    q.Set("to", cfg.To)
+
+    if len(cfg.HostIDs) > 0 {
+        quotedHostIDs := make([]string, 0, len(cfg.HostIDs))
+        for _, hostID := range cfg.HostIDs {
+            quotedHostIDs = append(quotedHostIDs, fmt.Sprintf("%q", hostID))
+        }
+
+        entitySelector := fmt.Sprintf(`type("HOST"),entityId(%s)`, strings.Join(quotedHostIDs, ","))
+        q.Set("entitySelector", entitySelector)
+    }
+
+    url.RawQuery = q.Encode()
+
+    logger.Debug("Fetching data from: ", "url", url.String())
+    return url.String()
 }
 
 func readResponseBody(resp *http.Response) ([]byte, error) {

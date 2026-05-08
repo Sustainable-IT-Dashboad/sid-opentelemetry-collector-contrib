@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -403,4 +404,53 @@ func TestTLSInsecureSkipVerify(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCreateMetricsQuery_WithHostIDs(t *testing.T) {
+    cfg := &Config{
+        APIEndpoint:     "https://dummy.dynatrace.com/api/v2/metrics/query",
+        MetricSelectors: []string{"builtin:host.cpu.usage", "builtin:host.mem.used"},
+        HostIDs:         []string{"HOST-xyz", "HOST-abc"},
+        Resolution:      "1m",
+        From:            "now-1m",
+        To:              "now",
+    }
+
+    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+    queryURL := createMetricsQuery(cfg, logger)
+
+    parsedURL, err := url.Parse(queryURL)
+    assert.NoError(t, err)
+
+    params := parsedURL.Query()
+
+    assert.Equal(t, "builtin:host.cpu.usage,builtin:host.mem.used", params.Get("metricSelector"))
+    assert.Equal(t, "1m", params.Get("resolution"))
+    assert.Equal(t, "now-1m", params.Get("from"))
+    assert.Equal(t, "now", params.Get("to"))
+    assert.Equal(t, `type("HOST"),entityId("HOST-xyz","HOST-abc")`, params.Get("entitySelector"))
+}
+
+func TestCreateMetricsQuery_WithoutHostIDs(t *testing.T) {
+    cfg := &Config{
+        APIEndpoint:     "https://dummy.dynatrace.com/api/v2/metrics/query",
+        MetricSelectors: []string{"builtin:host.cpu.usage"},
+        HostIDs:         []string{},
+        Resolution:      "1m",
+        From:            "now-1m",
+        To:              "now",
+    }
+
+    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+    queryURL := createMetricsQuery(cfg, logger)
+
+    parsedURL, err := url.Parse(queryURL)
+    assert.NoError(t, err)
+
+    params := parsedURL.Query()
+
+    assert.Equal(t, "builtin:host.cpu.usage", params.Get("metricSelector"))
+    assert.Equal(t, "", params.Get("entitySelector"))
 }
