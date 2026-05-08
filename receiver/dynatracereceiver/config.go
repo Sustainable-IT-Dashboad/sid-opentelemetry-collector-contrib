@@ -27,4 +27,3 @@ type Config struct {
 	TLSSettings       configtls.ClientConfig `mapstructure:"tls_settings"`        // Added TLS settings to handle self-signed certificates
 	DebugLevelLogging bool                   `mapstructure:"debug_level_logging"` // Added Debug-Level logging toggle
 }
-

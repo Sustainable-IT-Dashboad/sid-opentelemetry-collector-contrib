@@ -2,7 +2,7 @@ receivers:
   dynatrace:
     API_ENDPOINT: ${env:API_ENDPOINT}
     API_TOKEN: ${env:API_TOKEN}
-    host_ids:
+    host_ids: # can set specific host IDs to filter on, or leave empty to collect from all hosts
       - HOST-xyz
       - HOST-abc
     metric_selectors:
