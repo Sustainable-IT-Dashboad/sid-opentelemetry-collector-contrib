@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -20,12 +22,14 @@ import (
 )
 
 type Receiver struct {
-	Config     *Config
-	NextMetric consumer.Metrics
-	ticker     *time.Ticker
-	stopChan   chan struct{}
-	httpClient *http.Client
-	Logger     *slog.Logger
+	Config        *Config
+	NextMetric    consumer.Metrics
+	ticker        *time.Ticker
+	stopChan      chan struct{}
+	httpClient    *http.Client
+	Logger        *slog.Logger
+	hostNameCache map[string]string
+	cacheMutex    sync.RWMutex
 }
 
 type DynatraceResponse struct {
@@ -45,6 +49,15 @@ type MetricValues struct {
 	Values       []float64         `json:"values"`
 	Dimensions   []string          `json:"dimensions"`
 	DimensionMap map[string]string `json:"dimensionMap"`
+}
+
+type DynatraceEntitiesResponse struct {
+	Entities []DynatraceEntity `json:"entities"`
+}
+
+type DynatraceEntity struct {
+	EntityID    string `json:"entityId"`
+	DisplayName string `json:"displayName"`
 }
 
 // start polling from Dynatrace.
@@ -74,8 +87,12 @@ func (r *Receiver) Start(ctx context.Context, host component.Host) error { // re
 				metrics, err := r.pullDynatraceMetrics(ctx, r.Config)
 				if err != nil {
 					r.Logger.Error("Error pulling metrics:", "error", err)
+					continue
 				}
-
+				if len(metrics) == 0 {
+					r.Logger.Debug("No metrics received from Dynatrace")
+					continue
+				}
 				r.Logger.Debug("Metrics received", "metrics", metrics)
 				md := convertToMetricData(metrics, r.Logger)
 				r.Logger.Debug("Converted metrics", "metrics", md)
@@ -107,7 +124,7 @@ func (r *Receiver) pullDynatraceMetrics(ctx context.Context, cfg *Config) ([]Dyn
 	for i := 0; i < cfg.MaxRetries; i++ {
 		metrics, err = r.fetchAllDynatraceMetrics(ctx, cfg)
 		if err == nil {
-			r.Logger.Debug("Metrics recieved:", "metrics", metrics)
+			r.Logger.Debug("Metrics received:", "metrics", metrics)
 			return metrics, nil
 		}
 		r.Logger.Error("Attempt failed:", "attempt", i+1, "error", err)
@@ -122,7 +139,7 @@ func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([
 	ctx, cancel := context.WithTimeout(ctx, cfg.HTTPTimeout)
 	defer cancel()
 
-	resp, err := r.makeHttPRequest(ctx, url)
+	resp, err := r.makeHTTPRequest(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
@@ -140,16 +157,207 @@ func (r *Receiver) fetchAllDynatraceMetrics(ctx context.Context, cfg *Config) ([
 	}
 
 	r.Logger.Debug("Parsed response from Dynatrace", "response", dtResponse)
-
+	r.enrichMetricsWithHostNames(ctx, cfg, dtResponse.Result)
 	return dtResponse.Result, nil
+}
+
+func createHostEntitySelector(hostIDs []string) string {
+	quotedHostIDs := make([]string, 0, len(hostIDs))
+
+	for _, hostID := range hostIDs {
+		hostID = strings.TrimSpace(hostID)
+		if hostID == "" {
+			continue
+		}
+
+		quotedHostIDs = append(quotedHostIDs, fmt.Sprintf("%q", hostID))
+	}
+
+	if len(quotedHostIDs) == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(`type("HOST"),entityId(%s)`, strings.Join(quotedHostIDs, ","))
 }
 
 func createMetricsQuery(cfg *Config, logger *slog.Logger) string {
 	metricSelector := strings.Join(cfg.MetricSelectors, ",")
-	url := fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s", cfg.APIEndpoint, metricSelector, cfg.Resolution, cfg.From, cfg.To)
 
-	logger.Debug("Fetching data from: ", "url", url)
-	return url
+	u, err := url.Parse(cfg.APIEndpoint)
+	if err != nil {
+		// Fallback keeps old behavior if endpoint is somehow invalid.
+		logger.Error("Invalid API endpoint, falling back to raw URL creation", "error", err)
+		return fmt.Sprintf("%s?metricSelector=%s&resolution=%s&from=%s&to=%s",
+			cfg.APIEndpoint,
+			metricSelector,
+			cfg.Resolution,
+			cfg.From,
+			cfg.To,
+		)
+	}
+
+	q := u.Query()
+	q.Set("metricSelector", metricSelector)
+	q.Set("resolution", cfg.Resolution)
+	q.Set("from", cfg.From)
+	q.Set("to", cfg.To)
+
+	if entitySelector := createHostEntitySelector(cfg.HostIDs); entitySelector != "" {
+		q.Set("entitySelector", entitySelector)
+	}
+
+	u.RawQuery = q.Encode()
+	logger.Debug("Fetching data from: ", "url", u.String())
+	return u.String()
+}
+
+func createEntitiesQuery(cfg *Config, hostIDs []string) (string, error) {
+	u, err := url.Parse(cfg.APIEndpoint)
+	if err != nil {
+		return "", err
+	}
+
+	if strings.HasSuffix(u.Path, "/metrics/query") {
+		u.Path = strings.TrimSuffix(u.Path, "/metrics/query") + "/entities"
+	} else {
+		u.Path = strings.TrimRight(u.Path, "/") + "/entities"
+	}
+
+	q := u.Query()
+	q.Set("entitySelector", createHostEntitySelector(hostIDs))
+
+	pageSize := len(hostIDs)
+	if pageSize <= 0 {
+		pageSize = 1
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+	q.Set("pageSize", fmt.Sprintf("%d", pageSize))
+
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+func collectHostIDsFromMetrics(metrics []DynatraceMetricData) []string {
+	seen := make(map[string]struct{})
+
+	for _, metric := range metrics {
+		for _, data := range metric.Data {
+			if data.DimensionMap == nil {
+				continue
+			}
+
+			hostID := strings.TrimSpace(data.DimensionMap["dt.entity.host"])
+			if hostID == "" {
+				continue
+			}
+
+			seen[hostID] = struct{}{}
+		}
+	}
+
+	hostIDs := make([]string, 0, len(seen))
+	for hostID := range seen {
+		hostIDs = append(hostIDs, hostID)
+	}
+
+	return hostIDs
+}
+
+func (r *Receiver) resolveHostNames(ctx context.Context, cfg *Config, hostIDs []string) error {
+	if len(hostIDs) == 0 {
+		return nil
+	}
+
+	r.cacheMutex.Lock()
+	if r.hostNameCache == nil {
+		r.hostNameCache = make(map[string]string)
+	}
+	r.cacheMutex.Unlock()
+
+	missingHostIDs := make([]string, 0, len(hostIDs))
+
+	r.cacheMutex.RLock()
+	for _, hostID := range hostIDs {
+		if _, exists := r.hostNameCache[hostID]; !exists {
+			missingHostIDs = append(missingHostIDs, hostID)
+		}
+	}
+	r.cacheMutex.RUnlock()
+
+	if len(missingHostIDs) == 0 {
+		return nil
+	}
+
+	entitiesURL, err := createEntitiesQuery(cfg, missingHostIDs)
+	if err != nil {
+		return fmt.Errorf("failed to create entities query: %w", err)
+	}
+
+	r.Logger.Debug("Fetching Dynatrace host entities", "url", entitiesURL)
+
+	resp, err := r.makeHTTPRequest(ctx, entitiesURL)
+	if err != nil {
+		return fmt.Errorf("entities request failed: %w", err)
+	}
+
+	body, err := readResponseBody(resp)
+	if err != nil {
+		return err
+	}
+
+	var entitiesResponse DynatraceEntitiesResponse
+	if err := json.Unmarshal(body, &entitiesResponse); err != nil {
+		return fmt.Errorf("entities json unmarshal failed: %w", err)
+	}
+
+	r.cacheMutex.Lock()
+	defer r.cacheMutex.Unlock()
+
+	for _, entity := range entitiesResponse.Entities {
+		if entity.EntityID == "" || entity.DisplayName == "" {
+			continue
+		}
+
+		r.hostNameCache[entity.EntityID] = entity.DisplayName
+	}
+
+	return nil
+}
+
+func (r *Receiver) enrichMetricsWithHostNames(ctx context.Context, cfg *Config, metrics []DynatraceMetricData) {
+	hostIDs := collectHostIDsFromMetrics(metrics)
+	if len(hostIDs) == 0 {
+		return
+	}
+
+	if err := r.resolveHostNames(ctx, cfg, hostIDs); err != nil {
+		r.Logger.Error("Failed to resolve Dynatrace host names", "error", err)
+		return
+	}
+
+	for metricIndex := range metrics {
+		for dataIndex := range metrics[metricIndex].Data {
+			dimensionMap := metrics[metricIndex].Data[dataIndex].DimensionMap
+			if dimensionMap == nil {
+				continue
+			}
+
+			hostID := dimensionMap["dt.entity.host"]
+			if hostID == "" {
+				continue
+			}
+
+			r.cacheMutex.RLock()
+			hostName, exists := r.hostNameCache[hostID]
+			r.cacheMutex.RUnlock()
+
+			if exists && hostName != "" {
+				dimensionMap["host.name"] = hostName
+			}
+		}
+	}
 }
 
 func readResponseBody(resp *http.Response) ([]byte, error) {
@@ -161,7 +369,7 @@ func readResponseBody(resp *http.Response) ([]byte, error) {
 	return body, nil
 }
 
-func (r *Receiver) makeHttPRequest(ctx context.Context, url string) (*http.Response, error) {
+func (r *Receiver) makeHTTPRequest(ctx context.Context, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

@@ -17,6 +17,7 @@ type Config struct {
 	APIEndpoint       string                 `mapstructure:"API_ENDPOINT"`
 	APIToken          string                 `mapstructure:"API_TOKEN"`
 	MetricSelectors   []string               `mapstructure:"metric_selectors"`
+	HostIDs           []string               `mapstructure:"host_ids"`
 	Resolution        string                 `mapstructure:"resolution"`
 	From              string                 `mapstructure:"from"`
 	To                string                 `mapstructure:"to"`

@@ -30,6 +30,7 @@ func createDefaultConfig() component.Config {
 		APIEndpoint:       "https://YourEndpoint.live.dynatrace.com/api/v2/metrics/query", // Placeholder
 		APIToken:          "",
 		MetricSelectors:   []string{},
+		HostIDs:           []string{},
 		Resolution:        "1m",
 		From:              "now-1m",
 		To:                "now",
